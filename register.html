@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>NICE — Register</title>
+  <meta name="description" content="NICE demo clone — create an account.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237b2ff7'/%3E%3Cstop offset='1' stop-color='%23f107a3'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='url(%23g)'/%3E%3Ctext x='32' y='42' font-family='Arial,sans-serif' font-size='26' font-weight='700' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="auth-page">
+  <div id="frame">
+
+    <!-- ======= REGISTER ======= -->
+    <main class="auth-screen">
+      <div class="auth-hero compact">
+        <div class="logo-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="56" height="56">
+            <defs>
+              <linearGradient id="logog2" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#7b2ff7"/><stop offset="1" stop-color="#f107a3"/>
+              </linearGradient>
+            </defs>
+            <rect width="64" height="64" rx="18" fill="url(#logog2)"/>
+            <path d="M20 45V19h5.2l12.4 17.6V19H43v26h-5.2L25.4 27.4V45Z" fill="#fff"/>
+          </svg>
+        </div>
+        <h1 class="logo-word sm">Create account</h1>
+        <p class="tagline">Join NICE and share your moments</p>
+      </div>
+
+      <form id="reg-form" novalidate>
+        <!-- phone -->
+        <div class="field">
+          <span class="f-ic" data-icon="phone"></span>
+          <span class="cc">(+94)</span>
+          <input id="phone" type="tel" inputmode="numeric" autocomplete="tel"
+                 placeholder="7X XXX XXXX" maxlength="12" aria-label="Phone number">
+        </div>
+
+        <!-- invite code (optional) -->
+        <div class="field">
+          <span class="f-ic" data-icon="gift"></span>
+          <input id="invite" type="text" placeholder="Invite code (optional)" aria-label="Invite code">
+        </div>
+
+        <!-- password -->
+        <div class="field">
+          <span class="f-ic" data-icon="lock"></span>
+          <input id="password" type="password" autocomplete="new-password"
+                 placeholder="Password (min 6 characters)" aria-label="Password">
+          <button type="button" class="eye" id="toggle-pw" aria-label="Show password"></button>
+        </div>
+
+        <!-- confirm password -->
+        <div class="field">
+          <span class="f-ic" data-icon="lock"></span>
+          <input id="password2" type="password" autocomplete="new-password"
+                 placeholder="Confirm password" aria-label="Confirm password">
+        </div>
+
+        <!-- verification code -->
+        <div class="field has-btn">
+          <span class="f-ic" data-icon="code"></span>
+          <input id="vcode" type="text" inputmode="numeric" maxlength="6"
+                 placeholder="Verification code" aria-label="Verification code">
+          <button type="button" class="code-btn" id="get-code">Get code</button>
+        </div>
+
+        <div class="form-error" id="reg-error" hidden></div>
+
+        <button type="submit" class="btn-primary">Register now</button>
+
+        <p class="swap-link">Have an account?
+          <a href="index.html">Login</a>
+        </p>
+      </form>
+
+      <p class="agree">
+        <label class="check-row small">
+          <input type="checkbox" id="agree" checked>
+          <span class="box"></span>
+          <span>Agree to our
+            <a href="#" data-doc="terms">《User Agreement》</a>and
+            <a href="#" data-doc="privacy">《Privacy Policy》</a>
+          </span>
+        </label>
+      </p>
+
+      <div class="demo-card slim">
+        <div class="demo-head"><span class="demo-pill">DEMO</span><span>Demo mode — any 6-digit code works (e.g. <b>123456</b>)</span></div>
+      </div>
+    </main>
+
+    <p class="page-foot">Demo recreation for educational purposes · not affiliated with nicemktlk.com</p>
+  </div>
+
+  <script src="js/store.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/register.js"></script>
+</body>
+</html>
