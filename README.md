@@ -36,6 +36,24 @@ python3 -m http.server 8080
 
 Or just open `index.html` directly in a browser.
 
+## 🚀 Deploy to GitHub Pages
+
+The site is fully static (no build step) and all paths are relative, so it works
+both at a domain root and under a project subpath (`username.github.io/nice/`):
+
+1. Push this code to your repository (e.g. merge the PR into `main`).
+2. In GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch**.
+3. Branch: `main` / folder: `/ (root)` → **Save**.
+4. Your site goes live at `https://<username>.github.io/nice/` within a minute or two.
+
+Notes:
+
+- `.nojekyll` is included so GitHub Pages serves the files exactly as-is.
+- All navigation uses relative URLs + hash routing (`#/home`), so no 404-rewrite
+  tricks are needed on Pages.
+- Login state and demo data are stored per-browser (`localStorage`), so each
+  visitor starts with the seeded demo data.
+
 ## ✨ What's inside
 
 | Page            | Features                                                                 |
