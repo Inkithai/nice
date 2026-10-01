@@ -1,6 +1,7 @@
 /* ============================================================
    NICE (demo clone) — app logic
-   Views: home feed, discover, publish, messages, profile
+   Music listening task platform:
+   Home dashboard · Task centre (music player) · Wallet · Team · Profile
    All state lives in localStorage via Store.
    ============================================================ */
 (function () {
@@ -8,8 +9,7 @@
 
   const { Store, UI } = window;
   const {
-    icon, heartFilled, badgeVerified, badgeVIP, avatarHTML,
-    esc, timeAgo, fmtCount, fmtLKR, toast, openModal, closeModal
+    icon, badgeVIP, avatarHTML, esc, timeAgo, fmtLKR, toast, openModal, closeModal
   } = UI;
 
   /* ---------- auth guard (mirrors the original's "Please log in first") ---------- */
@@ -23,448 +23,485 @@
   const $view = document.getElementById('view');
   const $overlay = document.getElementById('overlay-root');
 
-  /* ---------- data helpers ---------- */
+  /* ============================================================
+     state helpers
+     ============================================================ */
 
-  function userById(id) { return db.users.find(u => u.id === id); }
-  function me() { return userById(session) || db.users[0]; }
+  function todayKey() { return new Date().toISOString().slice(0, 10); }
 
-  /* per-user preferences (vip, wallet, profile edits, notifications) */
   function prefs() {
     if (!db.perUser) db.perUser = {};
     if (!db.perUser[session]) {
-      db.perUser[session] = { vip: session === Store.ME, wallet: 1500, profile: {}, notifsOn: true };
+      db.perUser[session] = {
+        vip: 0, wallet: 0, profile: {}, notifsOn: true,
+        tasksDone: {}, day: todayKey()
+      };
     }
-    return db.perUser[session];
+    const p = db.perUser[session];
+    if (p.day !== todayKey()) {          /* daily reset */
+      p.day = todayKey();
+      p.tasksDone = {};
+      Store.saveDB();
+    }
+    return p;
   }
 
-  function myName() { return (prefs().profile.name || me().name); }
-  function myBio() { return (prefs().profile.bio || me().bio || ''); }
+  function vipLevel() { return prefs().vip || 0; }
+  function vipInfo(l) { return Store.VIP[l == null ? vipLevel() : l]; }
+  function rewardFor(t) { return Math.round(t.reward * vipInfo().rewardMult); }
+  function locked(t) { return (t.vipMin || 0) > vipLevel(); }
+  function trackById(id) { return db.tracks.find(t => t.id === id); }
 
-  function postById(id) { return db.posts.find(p => p.id === id); }
+  function tasksDoneToday() { return Object.keys(prefs().tasksDone).length; }
+  function remainingTasks() { return Math.max(0, vipInfo().daily - tasksDoneToday()); }
 
-  function sortedPosts() { return db.posts.slice().sort((a, b) => b.ts - a.ts); }
-  function myPosts() { return sortedPosts().filter(p => p.userId === session); }
-
-  function likeState(p) { return (p.id in db.likes) ? !!db.likes[p.id] : !!p.liked; }
-  function likeCount(p) {
-    const on = likeState(p);
-    return (p.likes || 0) + (on && !p.liked ? 1 : 0) - (!on && p.liked ? 1 : 0);
+  function sameDay(ts) { return new Date(ts).toDateString() === new Date().toDateString(); }
+  function todayEarned() {
+    return db.earnings
+      .filter(e => sameDay(e.ts) && e.amount > 0 && (e.type === 'task' || e.type === 'commission'))
+      .reduce((s, e) => s + e.amount, 0);
   }
-  function allComments(p) { return (p.comments || []).concat(db.extraComments[p.id] || []); }
-  function followState(uid) { return !!db.follows[uid]; }
+  function totalEarned() {
+    return db.earnings.filter(e => e.amount > 0 && e.type !== 'deposit').reduce((s, e) => s + e.amount, 0);
+  }
+  function totalWithdrawn() {
+    return -db.earnings.filter(e => e.type === 'withdraw').reduce((s, e) => s + e.amount, 0);
+  }
 
-  function fmtTime(ts) {
-    const d = new Date(ts), n = new Date();
-    const sameDay = d.toDateString() === n.toDateString();
-    if (sameDay) {
-      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-    }
-    return timeAgo(ts);
+  function meUser() { return db.users.find(u => u.id === session) || { name: 'NICE User', handle: 'niceuser' }; }
+  function myName() { return prefs().profile.name || meUser().name; }
+  function myPhone() {
+    const a = db.accounts.find(a => a.userId === session);
+    return a ? Store.prettyPhone(a.phone) : '';
+  }
+
+  function fmtClock(s) {
+    s = Math.max(0, Math.ceil(s));
+    return '00:' + String(s).padStart(2, '0');
+  }
+
+  function bellUnread() {
+    return db.earnings.some(e => e.ts > (db.notifRead || 0) && e.amount > 0);
   }
 
   /* ============================================================
      shared partials
      ============================================================ */
 
-  function postCard(p) {
-    const u = userById(p.userId) || me();
-    const liked = likeState(p);
-    const comments = allComments(p);
-    const mine = p.userId === session;
-    const following = followState(u.id);
-    const last = comments[comments.length - 1];
+  const RECORD_ICON = {
+    task: 'music', commission: 'users', withdraw: 'arrowup',
+    deposit: 'arrowdown', bonus: 'gift', vip: 'crown'
+  };
 
+  function recordRow(e) {
+    const credit = e.amount > 0;
     return (
-      '<article class="post" data-post="' + esc(p.id) + '">' +
-        '<div class="post-head">' +
-          avatarHTML(u, 42) +
-          '<div class="who">' +
-            '<div class="nm">' + esc(u.name) + ' ' + (u.verified ? badgeVerified() : '') + (u.vip ? badgeVIP() : '') + '</div>' +
-            '<div class="sub">' + icon('pin') + esc(p.location || 'Sri Lanka') + ' · ' + timeAgo(p.ts) + '</div>' +
-          '</div>' +
-          (mine ? '' :
-            '<button class="follow-btn ' + (following ? 'on' : '') + '" data-action="follow" data-uid="' + u.id + '">' +
-            (following ? 'Following' : 'Follow') + '</button>') +
-        '</div>' +
-        '<img class="post-img" src="' + esc(p.image) + '" alt="' + esc(p.caption).slice(0, 80) + '" loading="lazy">' +
-        '<div class="post-body">' +
-          '<div class="post-actions">' +
-            '<button class="pa ' + (liked ? 'liked' : '') + '" data-action="like" data-pid="' + esc(p.id) + '" aria-label="Like">' +
-              (liked ? heartFilled() : icon('heart')) +
-              '<span>' + fmtCount(likeCount(p)) + '</span>' +
-            '</button>' +
-            '<button class="pa" data-action="comments" data-pid="' + esc(p.id) + '" aria-label="Comments">' +
-              icon('comment') + '<span>' + comments.length + '</span>' +
-            '</button>' +
-            '<button class="pa" data-action="share" data-pid="' + esc(p.id) + '" aria-label="Share">' +
-              icon('share') + '<span>Share</span>' +
-            '</button>' +
-          '</div>' +
-          '<p class="caption"><b>' + esc(u.name) + '</b> ' + esc(p.caption) + '</p>' +
-          (p.tags && p.tags.length
-            ? '<div class="tags">' + p.tags.map(t =>
-                '<button class="tag-chip" data-action="tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>').join('') + '</div>'
-            : '') +
-          '<div class="comment-preview" data-action="comments" data-pid="' + esc(p.id) + '">' +
-            (last ? '<b>@' + esc(last.handle) + '</b> ' + esc(last.text)
-                  : 'Be the first to comment…') +
-          '</div>' +
-        '</div>' +
-      '</article>'
-    );
-  }
-
-  function gridItem(p) {
-    return (
-      '<div class="gi" data-action="open-post" data-pid="' + esc(p.id) + '">' +
-        '<img src="' + esc(p.image) + '" alt="" loading="lazy">' +
-        '<span class="hl">' + (likeState(p) ? heartFilled('sm') : icon('heart')) + ' ' + fmtCount(likeCount(p)) + '</span>' +
+      '<div class="record">' +
+        '<span class="r-ic ' + (credit ? 'cred' : 'deb') + '">' + icon(RECORD_ICON[e.type] || 'sparkle') + '</span>' +
+        '<div class="r-mid"><b>' + esc(e.label) + '</b><span>' + timeAgo(e.ts) + ' ago</span></div>' +
+        '<span class="r-amt ' + (credit ? 'cred' : 'deb') + '">' + (credit ? '+' : '') + fmtLKR(e.amount).replace('LKR ', '') + '</span>' +
       '</div>'
     );
   }
 
-  /* ============================================================
-     VIEW: home
-     ============================================================ */
-
-  function storyUsers() {
-    const others = db.users
-      .filter(u => u.id !== session)
-      .map(u => ({ user: u, post: sortedPosts().find(p => p.userId === u.id) }))
-      .filter(s => s.post);
-    const mine = { user: me(), post: myPosts()[0], isMe: true };
-    return (mine.post ? [mine] : []).concat(others);
+  function trackRow(t) {
+    const p = prefs();
+    const done = !!p.tasksDone[t.id];
+    const isLocked = locked(t);
+    return (
+      '<button class="task-row' + (done ? ' done' : '') + '" data-action="open-task" data-tid="' + esc(t.id) + '">' +
+        '<span class="tr-cover"><img src="' + esc(t.cover) + '" alt="">' +
+          (done ? '<span class="tr-done">' + icon('check') + '</span>' : '') +
+        '</span>' +
+        '<span class="tr-mid">' +
+          '<span class="tr-title">' + esc(t.title) + '</span>' +
+          '<span class="tr-sub">' + esc(t.artist) + ' · ' + esc(t.genre) + ' · ' + t.duration + 's</span>' +
+        '</span>' +
+        '<span class="tr-side">' +
+          (isLocked
+            ? '<span class="lock-chip">' + icon('lock') + ' ' + Store.VIP[t.vipMin].name + '</span>'
+            : '<span class="reward-chip">+' + fmtLKR(rewardFor(t)).replace('LKR ', '') + '</span>') +
+          (done ? '<span class="tr-state">Done today</span>'
+                : isLocked ? '<span class="tr-state">Locked</span>'
+                : '<span class="tr-state">Play</span>') +
+        '</span>' +
+      '</button>'
+    );
   }
+
+  function hotCard(t) {
+    const p = prefs();
+    const done = !!p.tasksDone[t.id];
+    return (
+      '<button class="hot-card' + (done ? ' done' : '') + '" data-action="open-task" data-tid="' + esc(t.id) + '">' +
+        '<span class="hc-cover"><img src="' + esc(t.cover) + '" alt="">' +
+          (locked(t) ? '<span class="hc-lock">' + icon('lock') + '</span>' : '') +
+        '</span>' +
+        '<span class="hc-title">' + esc(t.title) + '</span>' +
+        '<span class="hc-sub">' + (done ? '✔ Done' : '+' + fmtLKR(rewardFor(t)).replace('LKR ', '')) + '</span>' +
+      '</button>'
+    );
+  }
+
+  function qBtn(action, ic, label) {
+    return '<button class="q-btn" data-action="' + action + '">' + icon(ic) + '<span>' + label + '</span></button>';
+  }
+
+  function bellBtn() {
+    return '<button class="icon-btn" data-action="notifications" aria-label="Notifications">' +
+      icon('bell') + (bellUnread() ? '<span class="dot"></span>' : '') + '</button>';
+  }
+
+  /* ============================================================
+     VIEW: home dashboard
+     ============================================================ */
 
   function renderHome() {
-    const all = storyUsers();
-    const mineIncluded = all.length > 0 && all[0].isMe;
-    const friends = mineIncluded ? all.slice(1) : all;
+    const p = prefs();
+    const done = tasksDoneToday();
+    const limit = vipInfo().daily;
+    const hot = db.tracks.slice().sort((a, b) => b.reward - a.reward).slice(0, 5);
+    const recent = db.earnings.slice().sort((a, b) => b.ts - a.ts).slice(0, 4);
 
-    let html =
+    $view.innerHTML =
       '<header class="topbar">' +
-        '<span class="brand">NICE</span>' +
-        '<button class="icon-btn" data-action="notifications" aria-label="Notifications">' +
-          icon('bell') + (db.notifRead ? '' : '<span class="dot"></span>') +
-        '</button>' +
-      '</header>';
+        '<span class="brand">NICE</span>' + bellBtn() +
+      '</header>' +
 
-    /* stories */
-    html += '<div class="stories">';
-    html +=
-      '<button class="story" data-action="my-story">' +
-        '<span class="ring"><span class="add-story">' +
-          avatarHTML(me(), 52) +
-          '<span class="plus-mini">+</span>' +
-        '</span></span>' +
-        '<span>Your story</span>' +
-      '</button>';
-    friends.forEach((s, i) => {
-      html +=
-        '<button class="story" data-action="story" data-idx="' + (mineIncluded ? i + 1 : i) + '">' +
-          '<span class="ring">' + avatarHTML(s.user, 52) + '</span>' +
-          '<span>' + esc(s.user.name.split(' ')[0]) + '</span>' +
-        '</button>';
-    });
-    html += '</div>';
+      '<div class="marquee" aria-label="Notice"><span>' +
+        esc(db.notices.join('　·　')) +
+      '</span></div>' +
 
-    /* feed */
-    const feed = sortedPosts();
-    html += feed.map(postCard).join('');
+      '<div class="dash-card">' +
+        '<div class="dc-row">' +
+          '<div><b>' + fmtLKR(p.wallet) + '</b><span>Account balance</span></div>' +
+          '<span class="vip-tag">' + icon('crown') + ' ' + vipInfo().name + '</span>' +
+        '</div>' +
+        '<div class="dc-stats">' +
+          '<div class="ds"><b>' + fmtLKR(todayEarned()).replace('LKR ', '') + '</b><span>Earned today</span></div>' +
+          '<div class="ds"><b>' + done + '/' + limit + '</b><span>Tasks today</span></div>' +
+          '<div class="ds"><b>' + db.team.length + '</b><span>Team members</span></div>' +
+        '</div>' +
+        '<div class="taskbar"><div class="taskbar-fill" style="width:' + Math.min(100, Math.round(done / limit * 100)) + '%"></div></div>' +
+        '<p class="dc-note">' + (remainingTasks() > 0
+          ? '🎵 ' + remainingTasks() + ' task' + (remainingTasks() === 1 ? '' : 's') + ' available today'
+          : '🎉 Daily tasks complete — come back tomorrow!') + '</p>' +
+      '</div>' +
 
-    if (!feed.length) {
-      html += '<div class="empty">No posts yet — be the first to share something nice ✨</div>';
-    }
+      '<div class="quick-grid">' +
+        qBtn('start', 'play', 'Start task') +
+        qBtn('go-wallet', 'wallet', 'Wallet') +
+        qBtn('go-team', 'users', 'Invite') +
+        qBtn('vip', 'crown', 'Upgrade') +
+      '</div>' +
 
-    $view.innerHTML = html;
+      '<div class="section-title">Today’s hot tracks <a href="#/music">All tasks</a></div>' +
+      '<div class="hot-row">' + hot.map(hotCard).join('') + '</div>' +
+
+      '<div class="section-title">Recent activity <a href="#/wallet">Wallet</a></div>' +
+      '<div class="record-list">' + recent.map(recordRow).join('') + '</div>';
+
     $view.scrollTop = 0;
   }
 
   /* ============================================================
-     VIEW: discover
+     VIEW: music tasks
      ============================================================ */
 
-  let discoverQuery = '';
-
-  function topTags() {
-    const counts = {};
-    db.posts.forEach(p => (p.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
-    return Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 8);
-  }
-
-  function renderDiscover() {
-    const tags = topTags();
-    const q = discoverQuery.trim().toLowerCase();
-
+  function renderMusic() {
+    const done = tasksDoneToday();
+    const limit = vipInfo().daily;
     $view.innerHTML =
-      '<header class="topbar"><span class="brand" style="letter-spacing:.12em">Discover</span></header>' +
-      '<div class="searchbar">' + icon('search') +
-        '<input id="discover-q" type="search" placeholder="Search photos, tags, people…" value="' + esc(discoverQuery) + '" autocomplete="off">' +
+      '<header class="topbar"><span class="brand" style="letter-spacing:.12em">Music Tasks</span>' + bellBtn() + '</header>' +
+      '<div class="dash-card slim">' +
+        '<div class="dc-stats">' +
+          '<div class="ds"><b>' + done + '/' + limit + '</b><span>Completed today</span></div>' +
+          '<div class="ds"><b>' + fmtLKR(todayEarned()).replace('LKR ', '') + '</b><span>Earned today</span></div>' +
+          '<div class="ds"><b>' + remainingTasks() + '</b><span>Remaining</span></div>' +
+        '</div>' +
+        '<div class="taskbar"><div class="taskbar-fill" style="width:' + Math.min(100, Math.round(done / limit * 100)) + '%"></div></div>' +
       '</div>' +
-      '<div class="chips-row" id="chip-row">' +
-        tags.map(t =>
-          '<button class="tag-chip ' + (discoverQuery === '#' + t ? 'on' : '') + '" data-action="tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>'
-        ).join('') +
-      '</div>' +
-      '<div id="discover-results"></div>' +
-      '<div class="divider-label">Suggested for you</div>' +
-      '<div id="suggested-users"></div>';
-
-    renderDiscoverResults();
-    renderSuggested();
-
-    const $q = document.getElementById('discover-q');
-    $q.addEventListener('input', () => { discoverQuery = $q.value; renderDiscoverResults(); });
+      '<div class="track-list">' + db.tracks.map(trackRow).join('') + '</div>' +
+      '<p class="hint" style="text-align:center;padding:0 20px 24px">Listen for the full duration to complete a task and ' +
+      'credit the reward to your wallet. Tracks marked ' + icon('lock') + ' need a higher VIP level.</p>';
+    $view.scrollTop = 0;
   }
 
-  function renderDiscoverResults() {
-    const $el = document.getElementById('discover-results');
-    if (!$el) return;
-    let q = discoverQuery.trim().toLowerCase();
-    let posts = sortedPosts();
+  /* ============================================================
+     task player (overlay)
+     ============================================================ */
 
-    if (q.startsWith('#')) {
-      const tag = q.slice(1).toLowerCase();
-      posts = posts.filter(p => (p.tags || []).some(t => t.toLowerCase() === tag));
-    } else if (q) {
-      posts = posts.filter(p => {
-        const u = userById(p.userId) || {};
-        return (
-          p.caption.toLowerCase().includes(q) ||
-          (p.tags || []).some(t => t.toLowerCase().includes(q)) ||
-          (u.name || '').toLowerCase().includes(q) ||
-          (u.handle || '').toLowerCase().includes(q)
-        );
-      });
-    }
+  const RING_C = 2 * Math.PI * 54;   /* r=54 → circumference ≈ 339.3 */
 
-    $el.innerHTML = posts.length
-      ? '<div class="photo-grid">' + posts.map(gridItem).join('') + '</div>'
-      : '<div class="empty">Nothing found for “' + esc(discoverQuery) + '” 😢</div>';
-  }
+  function openTask(tid) {
+    const t = trackById(tid);
+    if (!t) return;
+    const p = prefs();
+    const already = !!p.tasksDone[t.id];
 
-  function renderSuggested() {
-    const $el = document.getElementById('suggested-users');
-    if (!$el) return;
-    const suggestions = db.users.filter(u => u.id !== session && !followState(u.id)).slice(0, 6);
-    if (!suggestions.length) {
-      $el.innerHTML = '<div class="empty">You follow everyone here 🎉</div>';
+    if (locked(t)) {
+      toast('This track requires ' + Store.VIP[t.vipMin].name + ' — upgrade to unlock 🔒', 'error');
+      openVIP();
       return;
     }
-    $el.innerHTML = suggestions.map(u =>
-      '<div class="user-row">' +
-        avatarHTML(u, 46) +
-        '<div class="who">' +
-          '<div class="nm">' + esc(u.name) + ' ' + (u.verified ? badgeVerified() : '') + '</div>' +
-          '<div class="bio">' + esc(u.bio || '') + '</div>' +
-        '</div>' +
-        '<button class="follow-btn" data-action="follow" data-uid="' + u.id + '">Follow</button>' +
-      '</div>'
-    ).join('');
-  }
+    if (!already && remainingTasks() <= 0) {
+      toast('Daily limit reached (' + vipInfo().daily + ' tasks) — upgrade VIP for more');
+      return;
+    }
 
-  /* ============================================================
-     VIEW: publish
-     ============================================================ */
-
-  const GALLERY = [
-    'images/posts/beach.jpg', 'images/posts/food.jpg', 'images/posts/cat.jpg', 'images/posts/hike.jpg',
-    'images/posts/city.jpg', 'images/posts/coffee.jpg', 'images/posts/fashion.jpg', 'images/posts/temple.jpg'
-  ];
-  const pubState = { image: null };
-
-  function renderPublish() {
-    $view.innerHTML =
-      '<header class="topbar"><span class="brand" style="letter-spacing:.12em">New post</span></header>' +
-      '<div class="pub-wrap">' +
-        '<div id="pub-preview"></div>' +
-        '<div class="gallery-grid" id="pub-gallery">' +
-          GALLERY.map(src =>
-            '<button type="button" class="gi' + (pubState.image === src ? ' sel' : '') + '" data-action="pick" data-src="' + src + '">' +
-            '<img src="' + src + '" alt=""></button>').join('') +
-          '<button type="button" class="gi upload-tile" data-action="upload">' + icon('image') + 'Upload</button>' +
+    const reward = rewardFor(t);
+    $overlay.innerHTML =
+      '<div class="player" style="background:linear-gradient(165deg,' + t.colors[0] + ',' + t.colors[1] + ')">' +
+        '<div class="pl-top">' +
+          '<button class="pl-close" data-action="close-player" aria-label="Close">' + icon('back') + '</button>' +
+          '<span class="pl-head">Now playing · Task</span>' +
+          '<span class="pl-reward">+' + fmtLKR(already ? 0 : reward).replace('LKR ', '') + '</span>' +
         '</div>' +
-        '<textarea class="pub-area" id="pub-caption" maxlength="300" placeholder="Write something nice… ✨"></textarea>' +
-        '<div class="pub-row">' + icon('tag') +
-          '<input id="pub-tags" type="text" placeholder="Tags — e.g. sunset, travel" autocomplete="off">' +
+        '<div class="pl-art">' +
+          '<img class="pl-cover" src="' + esc(t.cover) + '" alt="">' +
         '</div>' +
-        '<div class="pub-row">' + icon('pin') +
-          '<input id="pub-loc" type="text" placeholder="Add location (optional)" autocomplete="off">' +
+        '<div class="pl-ring">' +
+          '<svg viewBox="0 0 120 120" aria-hidden="true">' +
+            '<circle class="ring-bg" cx="60" cy="60" r="54"/>' +
+            '<circle class="ring-fg" id="pl-ring" cx="60" cy="60" r="54"/>' +
+          '</svg>' +
+          '<span id="pl-time">' + fmtClock(t.duration) + '</span>' +
         '</div>' +
-        '<p class="hint">Demo mode: nothing leaves your device — posts are saved in this browser only.</p>' +
-        '<button class="btn-primary" data-action="publish">Publish</button>' +
+        '<div class="pl-meta">' +
+          '<b>' + esc(t.title) + '</b>' +
+          '<span>' + esc(t.artist) + ' · ' + esc(t.genre) + '</span>' +
+        '</div>' +
+        (already
+          ? '<p class="pl-note">You already completed this task today — replay for fun, no reward.</p>'
+          : '<p class="pl-note">Keep the player open to earn <b>+' + fmtLKR(reward).replace('LKR ', '') + '</b></p>') +
+        '<div class="pl-controls">' +
+          '<button class="pl-play" data-action="toggle-play" aria-label="Pause">' + icon('pause') + '</button>' +
+        '</div>' +
+        '<button class="pl-ff" data-action="ff">Demo: fast-forward ⏩</button>' +
       '</div>';
 
-    renderPublishPreview();
+    const ring = document.getElementById('pl-ring');
+    ring.style.strokeDasharray = RING_C;
+    ring.style.strokeDashoffset = 0;
+
+    let finished = false;
+
+    function onTick(remain) {
+      const time = document.getElementById('pl-time');
+      if (time) time.textContent = fmtClock(remain);
+      const r = document.getElementById('pl-ring');
+      if (r) r.style.strokeDashoffset = RING_C * (1 - remain / t.duration);
+    }
+
+    function onEnd() {
+      if (finished) return;
+      finished = true;
+      completeTask(t);
+    }
+
+    window.Synth.start(t, onTick, onEnd);
   }
 
-  function renderPublishPreview() {
-    const $el = document.getElementById('pub-preview');
-    if (!$el) return;
-    $el.innerHTML = pubState.image
-      ? '<div class="pub-preview"><img src="' + esc(pubState.image) + '" alt="">' +
-        '<button class="clear" data-action="clear-img">' + icon('close') + '</button></div>'
-      : '<div class="pub-placeholder" data-action="upload">' + icon('camera') + '<span>Tap to choose a photo</span></div>';
+  function togglePlay() {
+    const S = window.Synth;
+    const btn = $overlay.querySelector('.pl-play');
+    if (!btn) return;
+    if (S.playing) {
+      S.pause();
+      btn.innerHTML = icon('play');
+      btn.setAttribute('aria-label', 'Play');
+    } else {
+      S.resume();
+      btn.innerHTML = icon('pause');
+      btn.setAttribute('aria-label', 'Pause');
+    }
   }
 
-  function downscaleImage(file, cb) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 1080;
-        let { width: w, height: h } = img;
-        if (w > MAX || h > MAX) {
-          const r = Math.min(MAX / w, MAX / h);
-          w = Math.round(w * r); h = Math.round(h * r);
-        }
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
-        cb(c.toDataURL('image/jpeg', 0.85));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
+  function closePlayer() {
+    window.Synth.stop();
+    $overlay.innerHTML = '';
+    render();   /* refresh counters/earnings behind the player */
   }
 
-  function doPublish() {
-    if (!pubState.image) { toast('Choose a photo first 📷', 'error'); return; }
-    const caption = (document.getElementById('pub-caption').value || '').trim();
-    const tagRaw = (document.getElementById('pub-tags').value || '');
-    const loc = (document.getElementById('pub-loc').value || '').trim();
+  function completeTask(t) {
+    const p = prefs();
+    const already = !!p.tasksDone[t.id];
+    let reward = 0;
 
-    const tags = tagRaw.split(/[,\s]+/)
-      .map(t => t.replace(/^#/, '').trim().toLowerCase())
-      .filter(t => t.length > 0)
-      .slice(0, 8);
+    if (!already) {
+      reward = rewardFor(t);
+      p.tasksDone[t.id] = Date.now();
+      p.wallet += reward;
+      db.earnings.push({ type: 'task', label: 'Task reward · ' + t.title, amount: reward, ts: Date.now() });
+      Store.saveDB();
+    }
 
-    db.posts.push({
-      id: 'p' + Date.now().toString(36),
-      userId: session,
-      image: pubState.image,
-      caption: caption || 'Shared on NICE ✨',
-      tags, location: loc || 'Sri Lanka',
-      ts: Date.now(), likes: 0, liked: false, comments: []
-    });
-    Store.saveDB();
+    const next = nextAvailableTrack();
+    $overlay.innerHTML =
+      '<div class="player success" style="background:linear-gradient(165deg,' + t.colors[0] + ',' + t.colors[1] + ')">' +
+        '<div class="pl-top"><span class="pl-head"></span><span class="pl-reward"></span></div>' +
+        '<div class="check-circle">' + icon('check') + '</div>' +
+        '<h2 class="suc-title">' + (reward ? 'Task complete!' : 'Replay finished') + '</h2>' +
+        '<p class="suc-amt">' + (reward
+          ? '<b>+' + fmtLKR(reward) + '</b> added to your wallet'
+          : 'No reward — this task was already completed today') + '</p>' +
+        '<div class="suc-btns">' +
+          (next
+            ? '<button class="btn-light" data-action="next-task" data-tid="' + esc(next.id) + '">' + icon('play') + ' Next task +' + fmtLKR(rewardFor(next)).replace('LKR ', '') + '</button>'
+            : '<button class="btn-light" data-action="go-music">View all tasks</button>') +
+          '<button class="btn-outline" data-action="close-player">' + (reward ? 'Done' : 'Close') + '</button>' +
+        '</div>' +
+        '<div class="suc-stats">' +
+          '<div class="ds"><b>' + tasksDoneToday() + '/' + vipInfo().daily + '</b><span>Tasks today</span></div>' +
+          '<div class="ds"><b>' + fmtLKR(prefs().wallet).replace('LKR ', '') + '</b><span>Balance</span></div>' +
+        '</div>' +
+      '</div>';
+  }
 
-    pubState.image = null;
-    toast('Posted! Your moment is live 🎉');
-    location.hash = '#/home';
+  function nextAvailableTrack() {
+    if (remainingTasks() <= 0) return null;
+    return db.tracks.find(t => !prefs().tasksDone[t.id] && !locked(t)) || null;
+  }
+
+  function openNextTask() {
+    const t = nextAvailableTrack();
+    if (!t) {
+      toast('All daily tasks done (' + vipInfo().daily + '/' + vipInfo().daily + ') 🎉');
+      location.hash = '#/music';
+      return;
+    }
+    openTask(t.id);
   }
 
   /* ============================================================
-     VIEW: messages
+     VIEW: wallet
      ============================================================ */
 
-  const REPLIES = [
-    'Haha nice! 😄', 'That’s awesome!', 'Wow 😍', 'Tell me more!',
-    'Sounds like a plan 👌', '🔥🔥🔥', 'Looks amazing!', 'Send more photos 📷',
-    'Agreed 100%', 'Let’s catch up soon!'
-  ];
-
-  let currentChatId = null;
-
-  function totalUnread() { return db.chats.reduce((n, c) => n + (c.unread || 0), 0); }
-
-  function renderMessages() {
-    let html =
-      '<header class="topbar"><span class="brand" style="letter-spacing:.12em">Chats</span></header>';
-    html += db.chats.map(c => {
-      const u = userById(c.userId);
-      const last = c.messages[c.messages.length - 1];
-      return (
-        '<div class="chat-row" data-action="open-chat" data-cid="' + esc(c.id) + '">' +
-          avatarHTML(u, 50) +
-          '<div class="mid">' +
-            '<div class="nm">' + esc(u.name) + ' ' + (u.verified ? badgeVerified() : '') + '</div>' +
-            '<div class="last ' + (c.unread ? 'unread' : '') + '">' +
-              (last ? (last.from === 'me' ? 'You: ' : '') + esc(last.text) : '') +
-            '</div>' +
-          '</div>' +
-          '<div class="side">' +
-            '<span class="tm">' + (last ? fmtTime(last.ts) : '') + '</span>' +
-            (c.unread ? '<span class="bdg">' + c.unread + '</span>' : '') +
-          '</div>' +
-        '</div>'
-      );
-    }).join('');
-    html += '<div class="empty">This is a demo — chats reply automatically 🤖</div>';
-    $view.innerHTML = html;
+  function renderWallet() {
+    const p = prefs();
+    const records = db.earnings.slice().sort((a, b) => b.ts - a.ts);
+    $view.innerHTML =
+      '<header class="topbar"><span class="brand" style="letter-spacing:.12em">Wallet</span>' + bellBtn() + '</header>' +
+      '<div class="dash-card">' +
+        '<div class="dc-row"><div><b>' + fmtLKR(p.wallet) + '</b><span>Available balance</span></div>' +
+          '<span class="vip-tag">' + icon('crown') + ' ' + vipInfo().name + '</span></div>' +
+        '<div class="dc-btns">' +
+          '<button class="btn-light" data-action="withdraw">' + icon('arrowup') + ' Withdraw</button>' +
+          '<button class="btn-outline" data-action="deposit">' + icon('arrowdown') + ' Deposit</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="w-stats">' +
+        '<div class="ws"><b>' + fmtLKR(todayEarned()).replace('LKR ', '') + '</b><span>Earned today</span></div>' +
+        '<div class="ws"><b>' + fmtLKR(totalEarned()).replace('LKR ', '') + '</b><span>Total earned</span></div>' +
+        '<div class="ws"><b>' + fmtLKR(totalWithdrawn()).replace('LKR ', '') + '</b><span>Withdrawn</span></div>' +
+      '</div>' +
+      '<div class="section-title">Records</div>' +
+      '<div class="record-list">' + records.map(recordRow).join('') + '</div>';
     $view.scrollTop = 0;
   }
 
-  function chatMessagesHTML(chat) {
-    return chat.messages.map(m =>
-      '<div class="bubble ' + (m.from === 'me' ? 'me' : 'them') + '">' +
-        esc(m.text) + '<span class="btime">' + fmtTime(m.ts) + '</span>' +
-      '</div>'
-    ).join('');
-  }
-
-  function openChat(cid) {
-    const chat = db.chats.find(c => c.id === cid);
-    if (!chat) return;
-    currentChatId = cid;
-    const u = userById(chat.userId);
-    chat.unread = 0;
-    Store.saveDB();
-    updateNavBadges();
-    if (location.hash.replace('#/', '') === 'messages') renderMessages();
-
-    $overlay.innerHTML =
-      '<div class="chat-screen">' +
-        '<div class="chat-top">' +
-          '<button class="icon-btn" data-action="chat-back" aria-label="Back">' + icon('back') + '</button>' +
-          avatarHTML(u, 40) +
-          '<div><div class="nm">' + esc(u.name) + ' ' + (u.vip ? badgeVIP() : '') + '</div>' +
-          '<div class="st">● online</div></div>' +
-        '</div>' +
-        '<div class="chat-body" id="chat-body">' + chatMessagesHTML(chat) +
-          '<div class="bubble them" style="align-self:flex-start;opacity:.7;font-size:12px">This is a demo chat — replies are automatic 🤖</div>' +
-        '</div>' +
-        '<form class="chat-input" id="chat-form">' +
-          '<input id="chat-text" type="text" placeholder="Message…" autocomplete="off" maxlength="500">' +
-          '<button class="send" type="submit" aria-label="Send">' + icon('send') + '</button>' +
+  function openWithdraw() {
+    const p = prefs();
+    const feeRate = vipLevel() >= 2 ? 0 : 0.02;
+    openModal(
+      '<div class="doc">' +
+        '<h3>Withdraw funds</h3>' +
+        '<div class="wallet-row"><div><b>' + fmtLKR(p.wallet) + '</b><span>Available balance</span></div></div>' +
+        '<form id="wd-form">' +
+          '<div class="field">' + icon('wallet') +
+            '<input id="wd-amount" type="number" inputmode="numeric" min="1" placeholder="Amount (min 500)" aria-label="Amount">' +
+          '</div>' +
+          '<div class="field">' + icon('card') +
+            '<select id="wd-method" aria-label="Method">' +
+              '<option>Bank transfer</option>' +
+              '<option>eZ Cash</option>' +
+              '<option>Dialog e-Wallet</option>' +
+              '<option>USSD Cash</option>' +
+            '</select>' +
+          '</div>' +
+          '<p class="hint">Fee: ' + (feeRate ? '2%' : '0% (VIP 2+)') + ' · minimum LKR 500 · demo only, no real transfer</p>' +
+          '<button class="btn-primary" type="submit">Withdraw</button>' +
         '</form>' +
-      '</div>';
-
-    const body = document.getElementById('chat-body');
-    body.scrollTop = body.scrollHeight;
-    document.getElementById('chat-text').focus();
-  }
-
-  function closeChat() { $overlay.innerHTML = ''; }
-
-  function scrollChat() {
-    const body = document.getElementById('chat-body');
-    if (body) body.scrollTop = body.scrollHeight;
-  }
-
-  function sendChatMessage() {
-    const $input = document.getElementById('chat-text');
-    const text = ($input.value || '').trim();
-    if (!text) return;
-    const chat = db.chats.find(c => c.id === currentChatId);
-    if (!chat) return;
-
-    chat.messages.push({ from: 'me', text, ts: Date.now() });
-    Store.saveDB();
-    $input.value = '';
-
-    const body = document.getElementById('chat-body');
-    body.innerHTML = chatMessagesHTML(chat) +
-      '<div class="bubble them typing" id="typing"><i></i><i></i><i></i></div>';
-    scrollChat();
-
-    setTimeout(() => {
-      chat.messages.push({ from: 'them', text: REPLIES[Math.floor(Math.random() * REPLIES.length)], ts: Date.now() });
+      '</div>'
+    );
+    document.getElementById('wd-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const amount = Math.floor(Number(document.getElementById('wd-amount').value) || 0);
+      const method = document.getElementById('wd-method').value;
+      if (amount < 500) { toast('Minimum withdrawal is LKR 500', 'error'); return; }
+      if (amount > p.wallet) { toast('Insufficient balance', 'error'); return; }
+      const fee = Math.round(amount * feeRate);
+      p.wallet -= amount;
+      db.earnings.push({ type: 'withdraw', label: 'Withdrawal · ' + method, amount: -amount, ts: Date.now() });
       Store.saveDB();
-      const b = document.getElementById('chat-body');
-      if (b) { b.innerHTML = chatMessagesHTML(chat); scrollChat(); }
-      if (location.hash.replace('#/', '') === 'messages') renderMessages();
-    }, 1500);
+      closeModal();
+      toast('Withdrawal submitted — ' + fmtLKR(amount - fee) + ' will arrive (demo)');
+      renderWallet();
+    });
+  }
+
+  function openDeposit() {
+    const p = prefs();
+    const wrap = openModal(
+      '<div class="doc">' +
+        '<h3>Deposit funds</h3>' +
+        '<div class="wallet-row"><div><b>' + fmtLKR(p.wallet) + '</b><span>Current balance</span></div></div>' +
+        '<p class="hint" style="margin:0 2px 10px">Demo mode — pick an amount to add play money. No real payment happens.</p>' +
+        '<div class="dep-grid">' +
+          [1000, 5000, 10000].map(a =>
+            '<button class="dep-btn" data-dep="' + a + '">+' + fmtLKR(a) + '</button>').join('') +
+        '</div>' +
+        '<button class="btn-ghost" data-close="1" style="margin-top:12px">Close</button>' +
+      '</div>'
+    );
+    wrap.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-dep]');
+      if (!b) return;
+      const amount = Number(b.dataset.dep);
+      p.wallet += amount;
+      db.earnings.push({ type: 'deposit', label: 'Deposit (demo)', amount, ts: Date.now() });
+      Store.saveDB();
+      closeModal();
+      toast('Deposited ' + fmtLKR(amount) + ' (demo) 💳');
+      renderWallet();
+    });
+  }
+
+  /* ============================================================
+     VIEW: team
+     ============================================================ */
+
+  function renderTeam() {
+    const todayComm = Math.round(db.team.reduce((s, m) => s + m.today, 0) * 0.08);
+    $view.innerHTML =
+      '<header class="topbar"><span class="brand" style="letter-spacing:.12em">My Team</span>' + bellBtn() + '</header>' +
+
+      '<div class="dash-card">' +
+        '<div class="dc-row"><div><b>' + db.team.length + '</b><span>Team members</span></div>' +
+          '<span class="vip-tag">' + icon('users') + ' L1 8% · L2 3%</span></div>' +
+        '<div class="dc-stats">' +
+          '<div class="ds"><b>' + fmtLKR(todayComm).replace('LKR ', '') + '</b><span>Commission today</span></div>' +
+          '<div class="ds"><b>' + fmtLKR(db.teamCommTotal).replace('LKR ', '') + '</b><span>Total commission</span></div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="invite-card">' +
+        '<div class="iv-row"><span>Invite code</span><code>' + esc(db.inviteCode) + '</code></div>' +
+        '<div class="iv-row"><span>Invite link</span><code class="iv-link" id="iv-link">https://nicemktlk.com/#/register?code=' + esc(db.inviteCode) + '</code></div>' +
+        '<button class="btn-light" data-action="copy" data-copy="' + esc(db.inviteCode) + '">' + icon('copy') + ' Copy code</button>' +
+      '</div>' +
+      '<p class="hint" style="margin:0 16px 4px">Earn 8% of your direct referrals’ task rewards — paid to your wallet automatically.</p>' +
+
+      '<div class="section-title">Members</div>' +
+      '<div class="record-list">' +
+        db.team.map(m =>
+          '<div class="record">' +
+            '<span class="r-ic grad">' + icon('users') + '</span>' +
+            '<div class="r-mid"><b>' + esc(m.name) + '</b><span>' + Store.VIP[m.level].name + ' · joined ' + m.joinedDays + 'd ago · today ' + fmtLKR(m.today).replace('LKR ', '') + '</span></div>' +
+            '<span class="r-amt cred">' + fmtLKR(m.total).replace('LKR ', '') + '</span>' +
+          '</div>').join('') +
+      '</div>';
+    $view.scrollTop = 0;
   }
 
   /* ============================================================
@@ -472,46 +509,38 @@
      ============================================================ */
 
   function renderProfile() {
-    const u = me();
-    const pf = prefs();
-    const posts = myPosts();
-    const following = Object.keys(db.follows).filter(k => db.follows[k]).length;
+    const p = prefs();
+    const u = meUser();
 
     $view.innerHTML =
       '<div class="profile-cover"></div>' +
       '<div class="profile-head">' +
         avatarHTML(Object.assign({}, u, { name: myName() }), 84, { cls: 'big' }) +
-        '<div class="p-name">' + esc(myName()) + ' ' + (u.verified ? badgeVerified(17) : '') +
-          (pf.vip ? badgeVIP(17) : '') + '</div>' +
-        '<div class="p-handle">@' + esc(u.handle) + ' · ' + Store.prettyPhone(((db.accounts.find(a => a.userId === session) || {}).phone) || '') + '</div>' +
-        '<p class="p-bio">' + esc(myBio()) + '</p>' +
+        '<div class="p-name">' + esc(myName()) + ' ' + (vipLevel() > 0 ? badgeVIP(17) : '') + '</div>' +
+        '<div class="p-handle">@' + esc(u.handle) + (myPhone() ? ' · ' + esc(myPhone()) : '') + '</div>' +
         '<div class="p-stats">' +
-          '<div class="st"><b>' + posts.length + '</b><span>Posts</span></div>' +
-          '<div class="st"><b>' + fmtCount(u.followers || 0) + '</b><span>Followers</span></div>' +
-          '<div class="st"><b>' + following + '</b><span>Following</span></div>' +
+          '<div class="st"><b>' + fmtLKR(p.wallet).replace('LKR ', '') + '</b><span>Balance</span></div>' +
+          '<div class="st"><b>' + tasksDoneToday() + '/' + vipInfo().daily + '</b><span>Tasks</span></div>' +
+          '<div class="st"><b>' + db.team.length + '</b><span>Team</span></div>' +
         '</div>' +
       '</div>' +
 
-      '<div class="vip-card ' + (pf.vip ? 'active' : '') + '">' +
-        '<div class="row1">' + icon('crown') + (pf.vip ? 'NICE VIP · active' : 'NICE VIP') + '</div>' +
-        '<p>' + (pf.vip
-          ? 'You have VIP status: exclusive badge, HD uploads and priority feed placement.'
-          : 'Unlock the exclusive badge, HD uploads and priority placement in the feed.') + '</p>' +
-        '<button class="cta" data-action="vip">' + icon('sparkle') + (pf.vip ? 'Manage membership' : 'Get VIP') + '</button>' +
+      '<div class="vip-card ' + (vipLevel() > 0 ? 'active' : '') + '">' +
+        '<div class="row1">' + icon('crown') + (vipLevel() > 0 ? 'NICE ' + vipInfo().name + ' · active' : 'Free member') + '</div>' +
+        '<p>' + (vipLevel() > 0
+          ? vipInfo().daily + ' daily tasks · ×' + vipInfo().rewardMult + ' rewards' +
+            (vipLevel() < 2 ? ' · 2% withdrawal fee' : ' · 0% withdrawal fee')
+          : 'Upgrade to unlock more daily tasks, bigger rewards and lower fees.') + '</p>' +
+        '<button class="cta" data-action="vip">' + icon('sparkle') +
+          (vipLevel() > 0 ? 'Manage membership' : 'Get VIP') + '</button>' +
       '</div>' +
 
-      '<div class="divider-label">My posts</div>' +
-      (posts.length
-        ? '<div class="photo-grid">' + posts.map(gridItem).join('') + '</div>'
-        : '<div class="empty">No posts yet — share your first moment!<br><br>' +
-          '<a href="#/publish" class="tag-chip" style="display:inline-block">＋ Create post</a></div>') +
-
-      '<div class="divider-label">Settings</div>' +
       '<div class="settings-list">' +
         '<button class="settings-item" data-action="edit-profile">' + icon('user') + '<span class="grow">Edit profile</span>' + icon('arrowright') + '</button>' +
-        '<button class="settings-item" data-action="vip">' + icon('crown') + '<span class="grow">Wallet &amp; VIP</span>' + icon('arrowright') + '</button>' +
+        '<button class="settings-item" data-action="go-wallet">' + icon('wallet') + '<span class="grow">Wallet &amp; VIP</span>' + icon('arrowright') + '</button>' +
+        '<button class="settings-item" data-action="go-team">' + icon('users') + '<span class="grow">My team</span>' + icon('arrowright') + '</button>' +
         '<button class="settings-item" data-action="toggle-notifs">' + icon('bell') + '<span class="grow">Notifications</span>' +
-          '<span class="switch ' + (pf.notifsOn ? 'on' : '') + '"></span></button>' +
+          '<span class="switch ' + (p.notifsOn ? 'on' : '') + '"></span></button>' +
         '<button class="settings-item" data-action="about">' + icon('sparkle') + '<span class="grow">About this demo</span>' + icon('arrowright') + '</button>' +
         '<button class="settings-item" data-action="reset">' + icon('sliders') + '<span class="grow">Reset demo data</span>' + icon('arrowright') + '</button>' +
         '<button class="settings-item danger" data-action="logout">' + icon('logout') + '<span class="grow">Log out</span>' + icon('arrowright') + '</button>' +
@@ -521,16 +550,13 @@
   }
 
   function openEditProfile() {
-    const pf = prefs();
+    const p = prefs();
     openModal(
       '<div class="doc">' +
         '<h3>Edit profile</h3>' +
         '<form id="profile-form">' +
           '<div class="field" style="margin-top:8px">' + icon('user') +
             '<input id="pf-name" type="text" maxlength="30" placeholder="Display name" value="' + esc(myName()) + '">' +
-          '</div>' +
-          '<div class="field">' + icon('sparkle') +
-            '<input id="pf-bio" type="text" maxlength="80" placeholder="Bio" value="' + esc(myBio()) + '">' +
           '</div>' +
           '<button class="btn-primary" type="submit">Save changes</button>' +
         '</form>' +
@@ -539,9 +565,8 @@
     document.getElementById('profile-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const name = document.getElementById('pf-name').value.trim();
-      const bio = document.getElementById('pf-bio').value.trim();
       if (!name) { toast('Name can’t be empty', 'error'); return; }
-      pf.profile = { name, bio };
+      p.profile = { name };
       Store.saveDB();
       closeModal();
       toast('Profile updated ✔');
@@ -549,41 +574,42 @@
     });
   }
 
+  /* ============================================================
+     VIP modal
+     ============================================================ */
+
   function openVIP() {
-    const pf = prefs();
-    const plans = [
-      { t: '1 Month', p: 'LKR 990' },
-      { t: '3 Months', p: 'LKR 2,490', save: 'Save 16%' },
-      { t: '12 Months', p: 'LKR 7,900', save: 'Save 33%' }
-    ];
-    let sel = 0;
+    const p = prefs();
+    const cur = vipLevel();
+    let sel = Math.min(cur + 1, Store.VIP.length - 1);
 
     const wrap = openModal(
       '<div class="doc">' +
         '<h3>' + icon('crown') + ' NICE VIP</h3>' +
-        '<div class="wallet-row"><div><b id="wallet-amt">' + fmtLKR(pf.wallet) + '</b><span>Wallet balance (demo)</span></div>' +
+        '<div class="wallet-row"><div><b id="wallet-amt">' + fmtLKR(p.wallet) + '</b><span>Wallet balance (demo)</span></div>' +
           '<button class="follow-btn" data-vip="recharge">' + icon('card') + ' Recharge +1,000</button></div>' +
         '<div id="plan-list">' +
-          plans.map((pl, i) =>
-            '<div class="plan ' + (i === 0 ? 'sel' : '') + '" data-plan="' + i + '">' +
-              (pl.save ? '<span class="save-pill">' + pl.save + '</span>' : '') +
-              '<div class="p-t"><span>' + pl.t + '</span><span class="p-p">' + pl.p + '</span></div>' +
+          Store.VIP.map(v =>
+            '<div class="plan' + (v.level === sel ? ' sel' : '') + (v.level === cur ? ' cur' : '') + '" data-plan="' + v.level + '">' +
+              (v.level === cur ? '<span class="save-pill">Current</span>' : '') +
+              '<div class="p-t"><span>' + v.name + '</span>' +
+                '<span class="p-p">' + (v.price ? fmtLKR(v.price) + '<i>/mo</i>' : 'Free') + '</span></div>' +
               '<ul>' +
-                '<li>' + icon('check') + 'Exclusive VIP badge</li>' +
-                '<li>' + icon('check') + 'HD photo uploads</li>' +
-                '<li>' + icon('check') + 'Priority in feed &amp; discover</li>' +
+                '<li>' + icon('check') + v.daily + ' listening tasks daily</li>' +
+                '<li>' + icon('check') + (v.rewardMult > 1 ? '×' + v.rewardMult + ' task rewards' : 'Standard rewards') + '</li>' +
+                '<li>' + icon('check') + (v.level >= 2 ? '0% withdrawal fee' : '2% withdrawal fee') + '</li>' +
               '</ul>' +
             '</div>').join('') +
         '</div>' +
         '<button class="btn-primary" id="vip-subscribe" data-vip="subscribe">' +
-          (pf.vip ? 'VIP is active — thanks for supporting!' : 'Subscribe with wallet') + '</button>' +
+          (cur === 0 ? 'Upgrade now' : 'Upgrade / extend') + '</button>' +
         '<p class="hint" style="text-align:center;margin-top:10px">Demo only — no real payments happen here.</p>' +
       '</div>'
     );
 
     wrap.addEventListener('click', (e) => {
       const plan = e.target.closest('[data-plan]');
-      if (plan) {
+      if (plan && !plan.classList.contains('cur')) {
         sel = Number(plan.dataset.plan);
         wrap.querySelectorAll('.plan').forEach(el => el.classList.remove('sel'));
         plan.classList.add('sel');
@@ -592,21 +618,28 @@
       const act = e.target.closest('[data-vip]');
       if (!act) return;
       if (act.dataset.vip === 'recharge') {
-        pf.wallet += 1000;
+        p.wallet += 1000;
         Store.saveDB();
         const w = wrap.querySelector('#wallet-amt');
-        if (w) w.textContent = fmtLKR(pf.wallet);
+        if (w) w.textContent = fmtLKR(p.wallet);
         toast('Recharged ' + fmtLKR(1000) + ' (demo) 💳');
       } else if (act.dataset.vip === 'subscribe') {
-        if (!pf.vip) {
-          pf.vip = true;
-          Store.saveDB();
-          toast('Welcome to NICE VIP, ' + myName().split(' ')[0] + '! 👑');
-        } else {
-          toast('VIP is already active 👑');
+        if (sel <= cur) {
+          toast('You’re already on ' + vipInfo(cur).name, 'error');
+          return;
         }
+        const price = Store.VIP[sel].price;
+        if (p.wallet < price) {
+          toast('Not enough balance — recharge first (demo)', 'error');
+          return;
+        }
+        p.wallet -= price;
+        p.vip = sel;
+        db.earnings.push({ type: 'vip', label: Store.VIP[sel].name + ' membership · 1 month', amount: -price, ts: Date.now() });
+        Store.saveDB();
+        toast('Welcome to ' + Store.VIP[sel].name + '! ' + Store.VIP[sel].daily + ' tasks/day unlocked 👑');
         closeModal();
-        renderProfile();
+        render();
       }
     });
   }
@@ -615,18 +648,78 @@
     openModal(
       '<div class="doc">' +
         '<h3>About this demo</h3>' +
-        '<p>This is a <b>static, front-end recreation</b> of the NICE photo-sharing web app ' +
-        '(nicemktlk.com), built with plain HTML, CSS and JavaScript for learning purposes.</p>' +
+        '<p>This is a <b>static, front-end recreation</b> of the NICE web app (nicemktlk.com) — ' +
+        'a music listening task platform — built with plain HTML, CSS and JavaScript for learning purposes.</p>' +
         '<h4>What’s inside</h4>' +
         '<p>· Login &amp; registration with demo credentials<br>' +
-        '· Photo feed with likes, comments, tags &amp; stories<br>' +
-        '· Discover search, publishing, chats, VIP &amp; profile</p>' +
+        '· Dashboard with balance, notices and daily task progress<br>' +
+        '· Music tasks with a live-synthesized player (WebAudio)<br>' +
+        '· Wallet with withdrawals, deposits and records<br>' +
+        '· Team referrals and VIP membership tiers</p>' +
         '<h4>Your data</h4>' +
         '<p>Everything is stored in your browser’s localStorage only. ' +
         'No servers, no tracking, no real payments. Not affiliated with the original site.</p>' +
         '<button class="btn-primary" data-close="1">Nice!</button>' +
       '</div>'
     );
+  }
+
+  /* ============================================================
+     notifications
+     ============================================================ */
+
+  function openNotifications() {
+    const items = db.earnings
+      .slice().sort((a, b) => b.ts - a.ts)
+      .slice(0, 8)
+      .map(e => ({
+        icon: RECORD_ICON[e.type] || 'sparkle',
+        text: (e.amount > 0 ? '+' : '') + fmtLKR(e.amount).replace('LKR ', '') + ' · ' + e.label,
+        ts: e.ts
+      }));
+    items.unshift({ icon: 'sparkle', text: db.notices[0], ts: Date.now() });
+
+    openModal(
+      '<div class="doc"><h3>Notifications</h3>' +
+      items.map(n =>
+        '<div class="notif">' +
+          '<span class="r-ic grad">' + icon(n.icon) + '</span>' +
+          '<div class="nt">' + esc(n.text) + '<span class="tm">' + timeAgo(n.ts) + ' ago</span></div>' +
+        '</div>').join('') +
+      '</div>'
+    );
+    db.notifRead = Date.now();
+    Store.saveDB();
+    const dot = $view.querySelector('[data-action="notifications"] .dot');
+    if (dot) dot.remove();
+  }
+
+  /* ============================================================
+     misc actions
+     ============================================================ */
+
+  function copyText(text) {
+    const done = () => toast('Copied: ' + text + ' 🔗');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+  function fallbackCopy(text, done) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      done();
+    } catch (e) {
+      toast('Copy not available — code: ' + text);
+    }
   }
 
   function confirmModal(title, body, okLabel, onOk) {
@@ -641,151 +734,6 @@
     wrap.querySelector('#confirm-ok').addEventListener('click', onOk);
   }
 
-  /* ============================================================
-     post detail modal + comments
-     ============================================================ */
-
-  function commentsHTML(p) {
-    const list = allComments(p);
-    if (!list.length) return '<div class="empty" style="padding:18px 0">No comments yet.</div>';
-    return list.map(c => {
-      const cu = db.users.find(x => x.handle === c.handle) || { name: c.name, handle: c.handle };
-      return (
-        '<div class="comment">' + avatarHTML(cu, 36) +
-          '<div class="ct"><b>' + esc(c.name) + '</b> ' + esc(c.text) +
-          '<span class="tm">' + timeAgo(c.ts) + ' ago</span></div>' +
-        '</div>'
-      );
-    }).join('');
-  }
-
-  function openPostModal(pid) {
-    const p = postById(pid);
-    if (!p) return;
-    openModal(
-      '<div>' + postCard(p) +
-        '<div class="comments-list" id="cm-list">' + commentsHTML(p) + '</div>' +
-        '<form class="comment-input" id="cm-form" data-pid="' + esc(p.id) + '">' +
-          '<input id="cm-text" type="text" placeholder="Add a comment…" autocomplete="off" maxlength="300">' +
-          '<button class="send" type="submit" aria-label="Post comment">' + icon('send') + '</button>' +
-        '</form>' +
-      '</div>'
-    );
-    const input = document.getElementById('cm-text');
-    if (input) input.focus();
-  }
-
-  /* ============================================================
-     stories
-     ============================================================ */
-
-  let storyCtl = null;
-
-  function openStories(startIdx) {
-    const items = storyUsers();
-    if (!items.length) { toast('No stories yet'); return; }
-    let i = Math.max(0, Math.min(startIdx, items.length - 1));
-    let timer = null;
-
-    function show() {
-      const it = items[i];
-      $overlay.innerHTML =
-        '<div class="story-viewer">' +
-          '<div class="sv-head">' + avatarHTML(it.user, 38) +
-            '<div><div class="nm">' + esc(it.user.name) + ' ' + (it.user.vip ? badgeVIP() : '') + '</div>' +
-            '<div class="tm">' + timeAgo(it.post.ts) + ' ago</div></div>' +
-            '<button class="sv-close" data-action="story-close" aria-label="Close">' + icon('close') + '</button>' +
-          '</div>' +
-          '<div style="padding:0 14px"><div class="bar"><i></i></div></div>' +
-          '<div class="sv-img-wrap"><img src="' + esc(it.post.image) + '" alt=""></div>' +
-          '<p class="sv-cap">' + esc(it.post.caption) + '</p>' +
-          '<div class="sv-nav prev" data-action="story-prev"></div>' +
-          '<div class="sv-nav next" data-action="story-next"></div>' +
-        '</div>';
-      clearTimeout(timer);
-      timer = setTimeout(() => next(), 5200);
-    }
-    function next() { i = (i + 1) % items.length; show(); }
-    function prev() { i = (i - 1 + items.length) % items.length; show(); }
-    function close() { clearTimeout(timer); $overlay.innerHTML = ''; storyCtl = null; }
-
-    storyCtl = { next, prev, close };
-    show();
-  }
-
-  /* ============================================================
-     notifications
-     ============================================================ */
-
-  function openNotifications() {
-    const NOTIF_ICON = { like: 'heart', comment: 'comment', follow: 'user' };
-    openModal(
-      '<div class="doc"><h3>Notifications</h3>' +
-      (db.notifs.length
-        ? db.notifs.map(n => {
-            const u = userById(n.userId);
-            return (
-              '<div class="notif">' + avatarHTML(u, 40) +
-                '<div class="nt"><b>' + esc(u.name) + '</b> ' + esc(n.text) +
-                '<span class="tm">' + timeAgo(n.ts) + ' ago</span></div>' +
-                icon(NOTIF_ICON[n.type] || 'bell') +
-              '</div>'
-            );
-          }).join('')
-        : '<div class="empty">You’re all caught up ✨</div>') +
-      '</div>'
-    );
-    db.notifRead = true;
-    Store.saveDB();
-    const dot = $view.querySelector('[data-action="notifications"] .dot');
-    if (dot) dot.remove();
-  }
-
-  /* ============================================================
-     actions
-     ============================================================ */
-
-  function toggleLike(pid) {
-    const p = postById(pid);
-    if (!p) return;
-    const now = !likeState(p);
-    db.likes[pid] = now;
-    Store.saveDB();
-    document.querySelectorAll('.pa[data-action="like"][data-pid="' + pid + '"]').forEach(btn => {
-      btn.classList.toggle('liked', now);
-      btn.innerHTML = (now ? heartFilled() : icon('heart')) + '<span>' + fmtCount(likeCount(p)) + '</span>';
-    });
-    document.querySelectorAll('.gi[data-pid="' + pid + '"] .hl').forEach(hl => {
-      hl.innerHTML = (now ? heartFilled('sm') : icon('heart')) + ' ' + fmtCount(likeCount(p));
-    });
-  }
-
-  function toggleFollow(uid) {
-    const u = userById(uid);
-    if (!u || uid === session) return;
-    db.follows[uid] = !db.follows[uid];
-    Store.saveDB();
-    const on = db.follows[uid];
-    toast(on ? 'Following ' + u.name + ' ✔' : 'Unfollowed ' + u.name);
-    document.querySelectorAll('.follow-btn[data-uid="' + uid + '"]').forEach(btn => {
-      btn.classList.toggle('on', on);
-      btn.textContent = on ? 'Following' : 'Follow';
-    });
-    renderSuggested();
-    if (location.hash.replace('#/', '') === 'profile') renderProfile();
-  }
-
-  function doShare() {
-    const url = location.origin + location.pathname + '#/home';
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url)
-        .then(() => toast('Link copied to clipboard 🔗'))
-        .catch(() => toast('Sharing is demo-only 🙂'));
-    } else {
-      toast('Sharing is demo-only 🙂');
-    }
-  }
-
   function doLogout() {
     confirmModal('Log out?', 'You can log back in anytime with the demo credentials.', 'Log out', () => {
       Store.clearSession();
@@ -797,7 +745,7 @@
   function doReset() {
     confirmModal(
       'Reset demo data?',
-      'This erases every change you made (posts, likes, chats, new accounts) and restores the original demo state.',
+      'This erases every change you made (tasks, wallet, VIP, new accounts) and restores the original demo state.',
       'Reset everything',
       () => {
         Store.reset();
@@ -812,9 +760,9 @@
 
   const ROUTES = {
     home: renderHome,
-    discover: renderDiscover,
-    publish: renderPublish,
-    messages: renderMessages,
+    music: renderMusic,
+    wallet: renderWallet,
+    team: renderTeam,
     profile: renderProfile
   };
 
@@ -825,32 +773,24 @@
 
   function render() {
     const r = currentRoute();
-    closeChat();
+    window.Synth.stop();
+    $overlay.innerHTML = '';
     closeModal();
     ROUTES[r]();
-    updateNavBadges();
+    updateNav();
   }
 
-  function updateNavBadges() {
-    const unread = totalUnread();
+  function updateNav() {
     document.querySelectorAll('#tabbar a').forEach(a => {
       a.classList.toggle('active', a.dataset.route === currentRoute());
-      a.querySelectorAll('.nav-badge').forEach(b => b.remove());
     });
-    const navMsg = document.getElementById('nav-messages');
-    if (navMsg && unread > 0) {
-      const b = document.createElement('span');
-      b.className = 'nav-badge';
-      b.textContent = unread;
-      navMsg.appendChild(b);
-    }
   }
 
   function setNavIcons() {
     document.getElementById('nav-home').querySelector('.nav-ic').innerHTML = icon('home');
-    document.getElementById('nav-discover').querySelector('.nav-ic').innerHTML = icon('search');
-    document.getElementById('nav-publish').querySelector('.publish-btn').innerHTML = icon('plus');
-    document.getElementById('nav-messages').querySelector('.nav-ic').innerHTML = icon('chat');
+    document.getElementById('nav-music').querySelector('.nav-ic').innerHTML = icon('music');
+    document.getElementById('nav-start').querySelector('.start-btn').innerHTML = icon('play');
+    document.getElementById('nav-wallet').querySelector('.nav-ic').innerHTML = icon('wallet');
     document.getElementById('nav-profile').querySelector('.nav-ic').innerHTML = icon('user');
   }
 
@@ -861,118 +801,38 @@
   document.body.addEventListener('click', (e) => {
     const el = e.target.closest('[data-action]');
     if (!el) return;
-    const act = el.dataset.action;
+    switch (el.dataset.action) {
+      case 'start': openNextTask(); break;
+      case 'open-task': openTask(el.dataset.tid); break;
+      case 'next-task': openTask(el.dataset.tid); break;
+      case 'toggle-play': togglePlay(); break;
+      case 'ff': window.Synth.finishNow(); break;
+      case 'close-player': closePlayer(); break;
+      case 'go-music': $overlay.innerHTML = ''; window.Synth.stop(); location.hash = '#/music'; break;
 
-    switch (act) {
-      case 'like': toggleLike(el.dataset.pid); break;
-      case 'comments': openPostModal(el.dataset.pid); break;
-      case 'share': doShare(); break;
-      case 'follow': toggleFollow(el.dataset.uid); break;
-      case 'tag':
-        discoverQuery = '#' + el.dataset.tag;
-        location.hash = '#/discover';
-        if (currentRoute() === 'discover') renderDiscover();
-        break;
-      case 'open-post': openPostModal(el.dataset.pid); break;
+      case 'go-wallet': location.hash = '#/wallet'; break;
+      case 'go-team': location.hash = '#/team'; break;
+      case 'withdraw': openWithdraw(); break;
+      case 'deposit': openDeposit(); break;
+
       case 'notifications': openNotifications(); break;
-
-      case 'story': openStories(Number(el.dataset.idx) || 0); break;
-      case 'my-story': {
-        const ml = myPosts()[0];
-        if (ml) { openStories(0); } else {
-          toast('Publish a photo to add it to your story ✨');
-          location.hash = '#/publish';
-        }
-        break;
-      }
-      case 'story-next': if (storyCtl) storyCtl.next(); break;
-      case 'story-prev': if (storyCtl) storyCtl.prev(); break;
-      case 'story-close': if (storyCtl) storyCtl.close(); break;
-
-      case 'open-chat': openChat(el.dataset.cid); break;
-      case 'chat-back': closeChat(); if (currentRoute() === 'messages') renderMessages(); break;
-
-      case 'pick':
-        pubState.image = el.dataset.src;
-        document.querySelectorAll('#pub-gallery .gi').forEach(g => g.classList.remove('sel'));
-        el.classList.add('sel');
-        renderPublishPreview();
-        break;
-      case 'upload': document.getElementById('file-input').click(); break;
-      case 'clear-img':
-        pubState.image = null;
-        document.querySelectorAll('#pub-gallery .gi').forEach(g => g.classList.remove('sel'));
-        renderPublishPreview();
-        break;
-      case 'publish': doPublish(); break;
-
-      case 'edit-profile': openEditProfile(); break;
       case 'vip': openVIP(); break;
+      case 'edit-profile': openEditProfile(); break;
+      case 'about': openAbout(); break;
+
+      case 'copy': copyText(el.dataset.copy); break;
+
       case 'toggle-notifs': {
-        const pf = prefs();
-        pf.notifsOn = !pf.notifsOn;
+        const p = prefs();
+        p.notifsOn = !p.notifsOn;
         Store.saveDB();
-        el.querySelector('.switch').classList.toggle('on', pf.notifsOn);
-        toast('Notifications ' + (pf.notifsOn ? 'on' : 'off'));
+        el.querySelector('.switch').classList.toggle('on', p.notifsOn);
+        toast('Notifications ' + (p.notifsOn ? 'on' : 'off'));
         break;
       }
-      case 'about': openAbout(); break;
       case 'reset': doReset(); break;
       case 'logout': doLogout(); break;
     }
-  });
-
-  /* comment + chat form submits (delegated) */
-  document.body.addEventListener('submit', (e) => {
-    if (e.target.id === 'cm-form') {
-      e.preventDefault();
-      const pid = e.target.dataset.pid;
-      const $input = document.getElementById('cm-text');
-      const text = ($input.value || '').trim();
-      if (!text) return;
-      if (!db.extraComments[pid]) db.extraComments[pid] = [];
-      db.extraComments[pid].push({ name: myName(), handle: me().handle, text, ts: Date.now() });
-      Store.saveDB();
-      const p = postById(pid);
-      const list = document.getElementById('cm-list');
-      if (list) list.innerHTML = commentsHTML(p);
-      $input.value = '';
-      const body = document.getElementById('modal');
-      if (body) body.scrollTop = body.scrollHeight;
-
-      /* update comment count + preview everywhere this post appears (no full re-render) */
-      const comments = allComments(p);
-      const last = comments[comments.length - 1];
-      document.querySelectorAll('.pa[data-action="comments"][data-pid="' + pid + '"] span')
-        .forEach(sp => { sp.textContent = comments.length; });
-      document.querySelectorAll('.comment-preview[data-pid="' + pid + '"]')
-        .forEach(cp => { cp.innerHTML = '<b>@' + esc(last.handle) + '</b> ' + esc(last.text); });
-
-      toast('Comment added 💬');
-    }
-    if (e.target.id === 'chat-form') {
-      e.preventDefault();
-      sendChatMessage();
-    }
-  });
-
-  /* hidden file input for uploads */
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file';
-  fileInput.accept = 'image/*';
-  fileInput.id = 'file-input';
-  fileInput.style.display = 'none';
-  document.body.appendChild(fileInput);
-  fileInput.addEventListener('change', () => {
-    const f = fileInput.files && fileInput.files[0];
-    if (!f) return;
-    downscaleImage(f, (dataURL) => {
-      pubState.image = dataURL;
-      document.querySelectorAll('#pub-gallery .gi').forEach(g => g.classList.remove('sel'));
-      renderPublishPreview();
-      toast('Photo ready — add a caption ✍️');
-    });
-    fileInput.value = '';
   });
 
   /* ============================================================
@@ -981,5 +841,6 @@
 
   window.addEventListener('hashchange', render);
   setNavIcons();
+  prefs();      /* ensures per-user state + daily reset exist */
   render();
 })();

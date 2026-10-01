@@ -1,11 +1,12 @@
 /* ============================================================
    NICE (demo clone) — data store
+   Music listening task platform edition.
    All data lives in localStorage. No backend required.
    ============================================================ */
 (function () {
   'use strict';
 
-  const NS = 'nice_demo_v1';
+  const NS = 'nice_demo_v2';
 
   /* ---------- generic persistence helpers ---------- */
   function load(key, fallback) {
@@ -25,132 +26,96 @@
   }
   function remove(key) { try { localStorage.removeItem(NS + ':' + key); } catch (e) {} }
 
-  /* ---------- seed data ---------- */
+  /* ---------- constants ---------- */
 
   const ME = 'u0';
 
-  const seedUsers = [
-    {
-      id: ME, name: 'Demo User', handle: 'demo', avatarImg: 'images/avatar-demo.jpg',
-      bio: 'Just here for the nice moments ✌️', verified: false, vip: true,
-      followers: 128, following: 3, isMe: true
-    },
-    { id: 'u1', name: 'Amaya Perera', handle: 'amaya', bio: 'Photographer 📷 · Colombo', verified: true,  vip: true,  followers: 12840, following: 412 },
-    { id: 'u2', name: 'Kavindu Silva', handle: 'kavindu', bio: 'Eat. Post. Repeat. 🍛', verified: false, vip: false, followers: 3120,  following: 288 },
-    { id: 'u3', name: 'Nadisha Fernando', handle: 'nadi', bio: 'Chasing sunsets 🌅 32/80 done', verified: false, vip: true,  followers: 8455,  following: 521 },
-    { id: 'u4', name: 'Tharindu Jay', handle: 'tharindu', bio: 'Sneakers · Street · Neon', verified: false, vip: false, followers: 2044,  following: 187 },
-    { id: 'u5', name: 'Sanduni R.', handle: 'sanduni', bio: 'Cat mom of two 🐱', verified: false, vip: false, followers: 987,   following: 143 },
-    { id: 'u6', name: 'Ruwan M.', handle: 'ruwan', bio: 'Coffee first, everything later ☕', verified: false, vip: false, followers: 1567,  following: 96 }
-  ];
-
-  const seedPosts = [
-    {
-      id: 'p1', userId: 'u3', image: 'images/posts/beach.jpg',
-      caption: 'Golden hour never disappoints. Swipe your stress away 🌅',
-      tags: ['sunset', 'beach', 'travel'], location: 'Mirissa, Sri Lanka',
-      ts: Date.now() - 2 * 3600e3, likes: 342, liked: false,
-      comments: [
-        { name: 'Amaya Perera', handle: 'amaya', text: 'That sky is unreal! 🔥', ts: Date.now() - 1.6 * 3600e3 },
-        { name: 'Kavindu Silva', handle: 'kavindu', text: 'Adding this to my list 📝', ts: Date.now() - 1.1 * 3600e3 }
-      ]
-    },
-    {
-      id: 'p2', userId: 'u2', image: 'images/posts/food.jpg',
-      caption: 'Rice & curry Saturday. No regrets, only seconds 🍛',
-      tags: ['foodie', 'srilankanfood', 'dinner'], location: 'Colombo',
-      ts: Date.now() - 5 * 3600e3, likes: 518, liked: false,
-      comments: [
-        { name: 'Ruwan M.', handle: 'ruwan', text: 'Which place is this?? 👀', ts: Date.now() - 4 * 3600e3 }
-      ]
-    },
-    {
-      id: 'p3', userId: 'u5', image: 'images/posts/cat.jpg',
-      caption: 'She picked the sunny spot again ☀️🐱',
-      tags: ['cat', 'pets', 'cutie'], location: 'Home',
-      ts: Date.now() - 8 * 3600e3, likes: 1204, liked: true,
-      comments: [
-        { name: 'Nadisha Fernando', handle: 'nadi', text: 'Those eyes 😍', ts: Date.now() - 7 * 3600e3 },
-        { name: 'Demo User', handle: 'demo', text: 'Queen behavior 👑', ts: Date.now() - 6.5 * 3600e3 }
-      ]
-    },
-    {
-      id: 'p4', userId: 'u3', image: 'images/posts/hike.jpg',
-      caption: '5am start, 100% worth it. The hills were glowing 🌄',
-      tags: ['hiking', 'ella', 'nature'], location: 'Ella, Sri Lanka',
-      ts: Date.now() - 26 * 3600e3, likes: 876, liked: false,
-      comments: []
-    },
-    {
-      id: 'p5', userId: 'u4', image: 'images/posts/city.jpg',
-      caption: 'City lights hit different after the rain 🌧️✨',
-      tags: ['nightlife', 'city', 'neon'], location: 'Colombo 03',
-      ts: Date.now() - 30 * 3600e3, likes: 441, liked: false,
-      comments: [
-        { name: 'Tharindu Jay', handle: 'tharindu', text: 'Shot on phone?! 😮', ts: Date.now() - 29 * 3600e3 }
-      ]
-    },
-    {
-      id: 'p6', userId: ME, image: 'images/posts/coffee.jpg',
-      caption: 'Slow morning, good coffee, zero plans ☕',
-      tags: ['coffee', 'morningvibes', 'workspace'], location: 'Kandy',
-      ts: Date.now() - 46 * 3600e3, likes: 96, liked: false,
-      comments: [
-        { name: 'Ruwan M.', handle: 'ruwan', text: 'Aesthetic level: 100', ts: Date.now() - 45 * 3600e3 }
-      ]
-    },
-    {
-      id: 'p7', userId: 'u1', image: 'images/posts/fashion.jpg',
-      caption: 'Autumn layers in a tropical country — I regret nothing 🧥',
-      tags: ['ootd', 'streetstyle', 'fashion'], location: 'Galle Fort',
-      ts: Date.now() - 52 * 3600e3, likes: 2310, liked: false,
-      comments: [
-        { name: 'Sanduni R.', handle: 'sanduni', text: 'Obsessed with this fit 🔥', ts: Date.now() - 50 * 3600e3 }
-      ]
-    },
-    {
-      id: 'p8', userId: ME, image: 'images/posts/temple.jpg',
-      caption: 'Climbed up before sunrise. Eight wonder or not, this view is everything 🌥️',
-      tags: ['sigiriya', 'sunrise', 'history'], location: 'Sigiriya',
-      ts: Date.now() - 70 * 3600e3, likes: 214, liked: false,
-      comments: []
-    }
-  ];
-
-  const seedChats = [
-    {
-      id: 'c1', userId: 'u1', unread: 2,
-      messages: [
-        { from: 'them', text: 'Hey! Are you joining the photo walk on Saturday? 📷', ts: Date.now() - 3 * 3600e3 },
-        { from: 'me', text: 'Trying to! Where are we meeting?', ts: Date.now() - 2.8 * 3600e3 },
-        { from: 'them', text: 'Galle Face at 5pm. Golden hour session 😎', ts: Date.now() - 0.6 * 3600e3 },
-        { from: 'them', text: 'Bring your wide lens!', ts: Date.now() - 0.5 * 3600e3 }
-      ]
-    },
-    {
-      id: 'c2', userId: 'u4', unread: 0,
-      messages: [
-        { from: 'them', text: 'Bro those neon shots 🔥', ts: Date.now() - 28 * 3600e3 },
-        { from: 'me', text: 'Thanks! Rain helps honestly 😄', ts: Date.now() - 27 * 3600e3 },
-        { from: 'them', text: 'Let\'s shoot together sometime', ts: Date.now() - 26 * 3600e3 }
-      ]
-    },
-    {
-      id: 'c3', userId: 'u6', unread: 1,
-      messages: [
-        { from: 'me', text: 'That café you recommended — top tier ☕', ts: Date.now() - 50 * 3600e3 },
-        { from: 'them', text: 'Told you! Try their flat white next time 👌', ts: Date.now() - 8 * 3600e3 }
-      ]
-    }
-  ];
-
-  const seedNotifs = [
-    { id: 'n1', type: 'like', userId: 'u2', text: 'liked your photo', postId: 'p6', ts: Date.now() - 1.2 * 3600e3 },
-    { id: 'n2', type: 'comment', userId: 'u5', text: 'commented: “That view! 😍”', postId: 'p8', ts: Date.now() - 4 * 3600e3 },
-    { id: 'n3', type: 'follow', userId: 'u1', text: 'started following you', postId: null, ts: Date.now() - 22 * 3600e3 }
-  ];
-
   const DEMO_ACCOUNT = { phone: '0712345678', password: 'demo1234', userId: ME };
   const DEMO_VERIFY_CODE = '123456';
+
+  /* VIP tiers: level, price (LKR/month), daily task limit, perks */
+  const VIP = [
+    { level: 0, name: 'Free',    price: 0,     daily: 2,  rewardMult: 1,
+      perks: ['2 tasks daily', 'Standard rewards', 'Basic support'] },
+    { level: 1, name: 'VIP 1',   price: 990,   daily: 6,  rewardMult: 1.2,
+      perks: ['6 tasks daily', '+20% task rewards', 'Lower withdrawal fee'] },
+    { level: 2, name: 'VIP 2',   price: 2490,  daily: 12, rewardMult: 1.5,
+      perks: ['12 tasks daily', '+50% task rewards', '0% withdrawal fee', 'VIP 2+ track pool'] },
+    { level: 3, name: 'VIP 3',   price: 7900,  daily: 20, rewardMult: 1.5,
+      perks: ['20 tasks daily', '+50% task rewards', '0% withdrawal fee', 'Priority support'] },
+    { level: 4, name: 'VIP 4',   price: 19900, daily: 40, rewardMult: 2,
+      perks: ['40 tasks daily', 'Double rewards', '0% withdrawal fee', 'Exclusive track pool'] }
+  ];
+
+  /* ---------- seed data ---------- */
+
+  const seedUsers = [
+    { id: ME, name: 'Demo User', handle: 'demo', avatarImg: 'images/avatar-demo.jpg' }
+  ];
+
+  /* Music tracks = listening tasks. `melody` drives the built-in synth
+     (WebAudio) so every "song" is generated live — no audio files needed. */
+  const now = Date.now();
+  const seedTracks = [
+    { id: 't1', title: 'Ocean Breeze',    artist: 'Aqua Sound',        genre: 'Chill',
+      cover: 'images/posts/beach.jpg',   duration: 30, reward: 35, vipMin: 0,
+      bpm: 76,  wave: 'sine',     vol: 0.12, hat: false, colors: ['#0ea5e9', '#2dd4bf'],
+      melody: [60, 64, 67, 72, 69, 72, 67, 64] },
+    { id: 't2', title: 'Midnight Drive',  artist: 'Neon District',     genre: 'Synthwave',
+      cover: 'images/posts/city.jpg',    duration: 30, reward: 45, vipMin: 1,
+      bpm: 100, wave: 'sawtooth', vol: 0.08, hat: true,  colors: ['#7c3aed', '#ec4899'],
+      melody: [57, 57, 64, 57, 60, 64, 69, 64] },
+    { id: 't3', title: 'Temple Dawn',     artist: 'Sunrise Collective', genre: 'Ambient',
+      cover: 'images/posts/temple.jpg',  duration: 30, reward: 40, vipMin: 0,
+      bpm: 58,  wave: 'sine',     vol: 0.12, hat: false, colors: ['#f59e0b', '#ef4444'],
+      melody: [61, 63, 66, 68, 66, 63, 61, 59] },
+    { id: 't4', title: 'Tea Hills',       artist: 'Hilltop Trio',      genre: 'Folk',
+      cover: 'images/posts/hike.jpg',    duration: 30, reward: 30, vipMin: 0,
+      bpm: 92,  wave: 'triangle', vol: 0.12, hat: false, colors: ['#22c55e', '#84cc16'],
+      melody: [55, 59, 62, 67, 71, 67, 62, 59] },
+    { id: 't5', title: 'Café Lo-Fi',      artist: 'Moka Beats',        genre: 'Lo-Fi',
+      cover: 'images/posts/coffee.jpg',  duration: 30, reward: 35, vipMin: 0,
+      bpm: 80,  wave: 'triangle', vol: 0.12, hat: true,  colors: ['#a16207', '#78350f'],
+      melody: [62, 65, 69, 65, 60, 64, 67, 64] },
+    { id: 't6', title: 'Neon Pulse',      artist: 'Voltage Club',      genre: 'EDM',
+      cover: 'images/posts/fashion.jpg', duration: 30, reward: 55, vipMin: 1,
+      bpm: 124, wave: 'square',   vol: 0.06, hat: true,  colors: ['#ec4899', '#f43f5e'],
+      melody: [64, 67, 71, 76, 71, 67, 64, 62] },
+    { id: 't7', title: 'Whisker Waltz',   artist: 'Purr Machine',      genre: 'Playful',
+      cover: 'images/posts/cat.jpg',     duration: 30, reward: 30, vipMin: 0,
+      bpm: 114, wave: 'triangle', vol: 0.12, hat: false, colors: ['#fb923c', '#f97316'],
+      melody: [60, 62, 64, 65, 67, 65, 64, 62] },
+    { id: 't8', title: 'Spice Market',    artist: 'Bazaar Sessions',   genre: 'World',
+      cover: 'images/posts/food.jpg',    duration: 30, reward: 40, vipMin: 2,
+      bpm: 96,  wave: 'sawtooth', vol: 0.08, hat: true,  colors: ['#dc2626', '#f97316'],
+      melody: [57, 58, 60, 62, 60, 58, 57, 55] }
+  ];
+
+  /* team members (referrals) */
+  const seedTeam = [
+    { id: 'u1', name: 'Amaya Perera',    level: 2, joinedDays: 32, today: 420, total: 12840 },
+    { id: 'u2', name: 'Kavindu Silva',   level: 0, joinedDays: 18, today: 60,  total: 2140 },
+    { id: 'u3', name: 'Nadisha Fernando',level: 1, joinedDays: 25, today: 180, total: 8455 },
+    { id: 'u4', name: 'Tharindu Jay',    level: 0, joinedDays: 9,  today: 95,  total: 2044 },
+    { id: 'u5', name: 'Sanduni R.',      level: 0, joinedDays: 5,  today: 35,  total: 987 },
+    { id: 'u6', name: 'Ruwan M.',        level: 1, joinedDays: 41, today: 210, total: 15670 }
+  ];
+
+  /* earnings history (amounts: positive = credit, negative = debit) */
+  const seedEarnings = [
+    { type: 'bonus',     label: 'Welcome bonus',                       amount: 1000, ts: now - 3 * 864e5 },
+    { type: 'vip',       label: 'VIP 1 membership · 1 month',          amount: -990, ts: now - 3 * 864e5 + 9e5 },
+    { type: 'withdraw',  label: 'Withdrawal · Bank transfer',          amount: -500, ts: now - 26 * 3600e3 },
+    { type: 'task',      label: 'Task reward · Café Lo-Fi',            amount: 42,   ts: now - 5 * 3600e3 },
+    { type: 'commission',label: 'Team commission · Kavindu Silva',     amount: 12,   ts: now - 2 * 3600e3 }
+  ];
+
+  const seedNotices = [
+    '🎧 Welcome to NICE Music — complete daily listening tasks to earn rewards!',
+    '📢 Invite friends with your code and earn 8% of their task rewards',
+    '⏰ Tasks reset every day at midnight — don’t leave rewards on the table',
+    '👑 Upgrade VIP to unlock more daily tasks and bigger rewards'
+  ];
 
   /* ---------- DB ---------- */
 
@@ -159,16 +124,20 @@
       seeded: true,
       accounts: [DEMO_ACCOUNT],
       users: seedUsers.slice(),
-      posts: seedPosts.slice(),
-      chats: seedChats.slice(),
-      notifs: seedNotifs.slice(),
-      notifRead: false,
-      follows: { u1: true, u2: true, u5: true },
-      likes: {},
-      extraComments: {},
-      /* per-user preferences, keyed by user id (demo account starts as VIP) */
+      tracks: seedTracks.slice(),
+      team: seedTeam.slice(),
+      teamCommTotal: 1850,
+      earnings: seedEarnings.slice(),
+      notices: seedNotices.slice(),
+      notifRead: now - 4 * 3600e3,
+      inviteCode: 'NICE-DEMO',
+      /* per-user state, keyed by user id */
       perUser: {
-        u0: { vip: true, wallet: 1500, profile: {}, notifsOn: true }
+        u0: {
+          vip: 1, wallet: 1500, profile: {}, notifsOn: true,
+          tasksDone: { t5: now - 5 * 3600e3 },   /* 1 task already done today */
+          day: new Date(now).toISOString().slice(0, 10)
+        }
       }
     };
   }
@@ -185,7 +154,7 @@
   function setSession(userId) { save('session', userId); }
   function clearSession() { remove('session'); }
 
-  function getRemembered() { return load('remembered', null); }   // { phone, password }
+  function getRemembered() { return load('remembered', null); }   /* { phone, password } */
   function setRemembered(v) { save('remembered', v); }
 
   /* ---------- phone helpers ---------- */
@@ -213,6 +182,7 @@
   window.Store = {
     NS,
     ME,
+    VIP,
     DEMO_ACCOUNT,
     DEMO_VERIFY_CODE,
     DEMO_PASSWORD: 'demo1234',

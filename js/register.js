@@ -111,22 +111,26 @@
     const id = 'u' + Date.now().toString(36);
     const invite = $invite.value.trim();
 
-    db.users.push({
-      id,
-      name: 'NICE User ' + phone.slice(-4),
-      handle: 'user' + phone.slice(-4),
-      bio: invite ? ('Invited by @' + invite.replace(/^@/, '') + ' 🎉') : 'New here — hello NICE! 👋',
-      verified: false,
-      vip: false,
-      followers: 1,
-      following: 0,
-      isMe: false
+    db.users.push({ id, name: 'NICE User ' + phone.slice(-4), handle: 'user' + phone.slice(-4) });
+
+    /* new members start on the Free tier with a welcome bonus */
+    db.perUser = db.perUser || {};
+    db.perUser[id] = {
+      vip: 0, wallet: 1000, profile: {}, notifsOn: true,
+      tasksDone: {}, day: new Date().toISOString().slice(0, 10)
+    };
+    db.earnings.push({
+      type: 'bonus',
+      label: 'Welcome bonus' + (invite ? ' · invited by ' + invite.replace(/^@/, '') : ''),
+      amount: 1000,
+      ts: Date.now()
     });
+
     db.accounts.push({ phone, password: $pw.value, userId: id });
     Store.saveDB();
 
     Store.setSession(id);
-    toast('Account created — welcome to NICE! 🎉');
+    toast('Account created — welcome to NICE! 🎉 +LKR 1,000 bonus added');
     setTimeout(() => location.replace('app.html'), 550);
   });
 })();
