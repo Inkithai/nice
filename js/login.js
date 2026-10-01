@@ -22,12 +22,17 @@
   const $err = document.getElementById('login-error');
   const $eye = document.getElementById('toggle-pw');
 
-  /* restore remembered credentials */
+  /* restore remembered credentials, else keep the pre-typed demo credentials */
   const rem = Store.getRemembered();
   if (rem && rem.phone) {
     $phone.value = rem.phone;
     $pw.value = rem.password || '';
     $remember.checked = true;
+  } else {
+    /* demo credentials come pre-typed (value attributes in index.html);
+       this guarantees they are set even if the browser cleared them */
+    if (!$phone.value) $phone.value = '0712345678';
+    if (!$pw.value) $pw.value = Store.DEMO_PASSWORD;
   }
 
   /* password visibility toggle */

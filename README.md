@@ -17,7 +17,9 @@ JavaScript. No frameworks, no backend, no build step.
 | Phone    | `071 234 5678` (accepts `0712345678`, `712345678`, `+94771234567`-style too) |
 | Password | `demo1234`   |
 
-The login page also has a **"Fill demo credentials"** button.
+The credentials are **pre-typed into the login form** — visitors just press
+"Log in now". (If you register your own account with "remember me" checked,
+your own credentials will be pre-filled instead.)
 
 You can also **register a new account** (any valid phone number; the SMS code is
 simulated — any 6 digits work, e.g. `123456`). New accounts start on the Free

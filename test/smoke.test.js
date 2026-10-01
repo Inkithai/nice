@@ -38,6 +38,9 @@ console.log('\n— Login page —');
   window.eval(read('js/login.js'));
 
   check('demo credentials card present', doc.getElementById('demo-phone').textContent.includes('071 234 5678'));
+  check('credentials pre-typed on load',
+    doc.getElementById('phone').value === '0712345678' &&
+    doc.getElementById('password').value === 'demo1234');
 
   doc.getElementById('phone').value = '0712345678';
   doc.getElementById('password').value = 'wrongpass';
